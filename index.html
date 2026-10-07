@@ -7,10 +7,20 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- Canvas onde todo o jogo é renderizado -->
-    <canvas id="gameCanvas"></canvas>
+    <div id="gameWrapper">
+        <canvas id="gameCanvas"></canvas>
 
-    <!-- Script principal (contém Player, Ball, Game Loop, etc.) -->
+        <!-- Tela inicial (sobreposta) -->
+        <div id="titleScreen">
+            <div id="titleScreenOverlay"></div>
+            <div id="titleScreenContent">
+                <h1 id="gameTitle">DIRT PITCH</h1>
+                <button id="playButton">▶ JOGAR</button>
+                <p id="hintText">P1: WASD + Q &nbsp;|&nbsp; P2: O K L Ç + P</p>
+            </div>
+        </div>
+    </div>
+
     <script src="game.js"></script>
 </body>
 </html>

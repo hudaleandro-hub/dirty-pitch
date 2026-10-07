@@ -2,7 +2,7 @@
    DIRT PITCH - Estilos globais
    ========================================== */
 
-   * {
+* {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -21,18 +21,122 @@ body {
     font-family: monospace;
 }
 
-canvas {
-    /* Cor base do campo (o drawField sobrescreve, mas evita flash branco no load) */
-    background: #3d6b3d;
-
-    /* Mantém os pixels nítidos ao escalar (essencial para pixel-art) */
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
-
-    /* Moldura estilo arcade */
+/* Wrapper que agrupa canvas + tela inicial */
+#gameWrapper {
+    position: relative;
+    display: inline-block;
     border: 4px solid #111;
     box-shadow: 0 0 24px rgba(0, 0, 0, 0.6);
+}
 
-    /* Cursor de mira (crosshair) */
+canvas {
+    display: block;
+    background: #3d6b3d;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
     cursor: crosshair;
+}
+
+/* ==========================================
+   TELA INICIAL
+   ========================================== */
+#titleScreen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+
+    /* A imagem de fundo fica aqui */
+    background-image: url('assets/background.jpeg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+
+    z-index: 10;
+    cursor: default;
+
+    /* Estado inicial: totalmente visível */
+    opacity: 1;
+    transition: opacity 1.2s ease;
+}
+
+/* Overlay escuro para dar contraste ao texto */
+#titleScreenOverlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1;
+}
+
+#titleScreenContent {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    color: #fff;
+    user-select: none;
+}
+
+#gameTitle {
+    font-size: 48px;
+    letter-spacing: 6px;
+    font-weight: bold;
+    color: #ffeb3b;
+    text-shadow:
+        3px 3px 0 #000,
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000;
+    margin-bottom: 40px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.04); }
+}
+
+#playButton {
+    font-family: monospace;
+    font-size: 20px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    padding: 14px 36px;
+    color: #fff;
+    background: #3a86ff;
+    border: 3px solid #fff;
+    cursor: pointer;
+    text-transform: uppercase;
+
+    /* Estilo "pixel" com sombra sólida */
+    box-shadow: 4px 4px 0 #000;
+    transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease;
+}
+
+#playButton:hover {
+    background: #5a9dff;
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 #000;
+}
+
+#playButton:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0 #000;
+}
+
+#hintText {
+    margin-top: 36px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.85);
+    letter-spacing: 1px;
+    text-shadow: 2px 2px 0 #000;
+}
+
+/* ==========================================
+   ANIMAÇÃO DE SAÍDA (fade-out)
+   ========================================== */
+#titleScreen.fade-out {
+    opacity: 0;
+    pointer-events: none; /* impede cliques durante o fade */
 }
