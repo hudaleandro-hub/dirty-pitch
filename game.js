@@ -3,8 +3,8 @@
 // P1 (vermelho, esquerda): WASD + Q (forte) + E (fraco)
 // P2 (azul, direita):      OKLÇ + P (forte) + I (fraco)
 //
-// Chute forte: baseSpeed 350, cooldown 60s (1 minuto)
-// Chute fraco: baseSpeed 250, cooldown 0.12s
+// Chute forte: baseSpeed 300, cooldown 60s (1 minuto)
+// Chute fraco: baseSpeed 270, cooldown 0.12s
 // ==========================================
 
 const canvas = document.getElementById('gameCanvas');
@@ -129,8 +129,8 @@ function resetPositions() {
 // friction  → desaceleração da bola (px/s²)
 // cooldown  → tempo de espera entre chutes iguais (SEGUNDOS)
 const KICK_TYPES = {
-    strong: { baseSpeed: 350, friction: 1.8, cooldown: 60.00 }, // 1 minuto
-    weak:   { baseSpeed: 250, friction: 3.5, cooldown: 0.12 },
+    strong: { baseSpeed: 300, friction: 1.8, cooldown: 60.00 }, // 1 minuto
+    weak:   { baseSpeed: 270, friction: 3.5, cooldown: 0.12 },
 };
 
 // ==========================================
@@ -150,7 +150,6 @@ class Actor {
         this.ballOffset = this.radius + 3;
 
         // Cooldowns SEPARADOS por tipo de chute.
-        // Assim, chutar forte não bloqueia o fraco e vice-versa.
         this.kickCooldownStrong = 0;
         this.kickCooldownWeak   = 0;
 
@@ -224,19 +223,17 @@ class Actor {
 
     /**
      * Chuta a bola. `type` = 'strong' | 'weak'.
-     * Agora o cooldown é CHECADO de verdade — se ainda estiver ativo,
-     * o chute é ignorado.
+     * O cooldown é checado de verdade — se ainda estiver ativo, o chute é ignorado.
      */
     kick(ball, type = 'strong') {
         if (ball.owner !== this) return;
 
         const cfg = KICK_TYPES[type] || KICK_TYPES.strong;
 
-        // Escolhe qual cooldown checar/atualizar de acordo com o tipo
         const isStrong = type === 'strong';
         const cdField = isStrong ? 'kickCooldownStrong' : 'kickCooldownWeak';
 
-        // ✅ Trava: se o cooldown desse tipo ainda não zerou, não chuta
+        // Trava: se o cooldown desse tipo ainda não zerou, não chuta
         if (this[cdField] > 0) return;
 
         const nx = this.facing.x;
@@ -250,7 +247,6 @@ class Actor {
 
         ball.friction = cfg.friction;
 
-        // ✅ Ativa o cooldown do tipo correspondente
         this[cdField] = cfg.cooldown;
     }
 
@@ -302,7 +298,6 @@ class Player extends Actor {
     }
 
     update(dt, ball) {
-        // Decrementa AMBOS os cooldowns
         if (this.kickCooldownStrong > 0) this.kickCooldownStrong -= dt;
         if (this.kickCooldownWeak   > 0) this.kickCooldownWeak   -= dt;
 
@@ -363,7 +358,6 @@ class Ball {
         this.x += this.vx * dt;
         this.y += this.vy * dt;
 
-        // Topo e base
         if (this.y - this.radius < FIELD_MARGIN) {
             this.y = FIELD_MARGIN + this.radius;
             this.vy = -this.vy * 0.6;
@@ -517,7 +511,6 @@ function drawField(ctx) {
 // HUD
 // ==========================================
 function drawHUD(ctx) {
-    // Placar
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(VIEW_W / 2 - 44, 2, 88, 14);
 
@@ -535,7 +528,6 @@ function drawHUD(ctx) {
     ctx.fillText(`${gameState.scoreBlue}`, VIEW_W / 2 + 18, 12);
     ctx.textAlign = 'left';
 
-    // Faixa inferior com instruções
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(0, VIEW_H - 12, VIEW_W, 12);
 
@@ -549,7 +541,6 @@ function drawHUD(ctx) {
     ctx.fillText('P2: O K L Ç | P forte | I fraco', VIEW_W - 4, VIEW_H - 4);
     ctx.textAlign = 'left';
 
-    // Mensagem de gol
     if (gameState.goalPause > 0) {
         ctx.fillStyle = 'rgba(0,0,0,0.65)';
         ctx.fillRect(0, VIEW_H / 2 - 12, VIEW_W, 24);
@@ -596,7 +587,6 @@ function loop(now) {
     p1.draw(ctx);
     p2.draw(ctx);
 
-    // Indicador de posse
     if (ball.owner === p1) {
         ctx.fillStyle = 'rgba(233,75,60,0.9)';
         ctx.font = '6px monospace';
@@ -613,9 +603,6 @@ function loop(now) {
     requestAnimationFrame(loop);
 }
 
-// ==========================================
-// INÍCIO DO JOGO (chamado após o fade-out da tela inicial)
-// ==========================================
 function startGame() {
     lastTime = performance.now();
     requestAnimationFrame(loop);
