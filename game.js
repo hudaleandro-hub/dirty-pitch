@@ -2,6 +2,9 @@
 // DIRT PITCH - 2 Jogadores Locais (1v1)
 // P1 (vermelho, esquerda): WASD + Q (forte) + E (fraco)
 // P2 (azul, direita):      OKLÇ + P (forte) + I (fraco)
+//
+// Chute forte: baseSpeed 350, cooldown 60s (1 minuto)
+// Chute fraco: baseSpeed 250, cooldown 0.12s
 // ==========================================
 
 const canvas = document.getElementById('gameCanvas');
@@ -120,6 +123,17 @@ function resetPositions() {
 }
 
 // ==========================================
+// CONFIGURAÇÃO DOS CHUTES (compartilhada por P1 e P2)
+// ==========================================
+// baseSpeed → velocidade inicial da bola (px/s)
+// friction  → desaceleração da bola (px/s²)
+// cooldown  → tempo de espera entre chutes iguais (SEGUNDOS)
+const KICK_TYPES = {
+    strong: { baseSpeed: 350, friction: 1.8, cooldown: 60.00 }, // 1 minuto
+    weak:   { baseSpeed: 250, friction: 3.5, cooldown: 0.12 },
+};
+
+// ==========================================
 // CLASSE BASE: Actor
 // ==========================================
 class Actor {
@@ -134,7 +148,12 @@ class Actor {
         this.team = team;
 
         this.ballOffset = this.radius + 3;
-        this.kickCooldown = 0;
+
+        // Cooldowns SEPARADOS por tipo de chute.
+        // Assim, chutar forte não bloqueia o fraco e vice-versa.
+        this.kickCooldownStrong = 0;
+        this.kickCooldownWeak   = 0;
+
         this.color = '#e94b3c';
     }
 
@@ -204,19 +223,21 @@ class Actor {
     }
 
     /**
-     * Chuta a bola. `type` define força e comportamento.
-     *   'strong' → chutão (mais rápido, mais longo)
-     *   'weak'   → toque curto (mais lento, para mais rápido)
+     * Chuta a bola. `type` = 'strong' | 'weak'.
+     * Agora o cooldown é CHECADO de verdade — se ainda estiver ativo,
+     * o chute é ignorado.
      */
     kick(ball, type = 'strong') {
         if (ball.owner !== this) return;
 
-        const KICK_TYPES = {
-            strong: { baseSpeed: 420, friction: 1.8, cooldown: 0.20 },
-            weak:   { baseSpeed: 180, friction: 3.5, cooldown: 0.12 },
-        };
-
         const cfg = KICK_TYPES[type] || KICK_TYPES.strong;
+
+        // Escolhe qual cooldown checar/atualizar de acordo com o tipo
+        const isStrong = type === 'strong';
+        const cdField = isStrong ? 'kickCooldownStrong' : 'kickCooldownWeak';
+
+        // ✅ Trava: se o cooldown desse tipo ainda não zerou, não chuta
+        if (this[cdField] > 0) return;
 
         const nx = this.facing.x;
         const ny = this.facing.y;
@@ -229,7 +250,8 @@ class Actor {
 
         ball.friction = cfg.friction;
 
-        this.kickCooldown = cfg.cooldown;
+        // ✅ Ativa o cooldown do tipo correspondente
+        this[cdField] = cfg.cooldown;
     }
 
     draw(ctx) {
@@ -280,7 +302,9 @@ class Player extends Actor {
     }
 
     update(dt, ball) {
-        if (this.kickCooldown > 0) this.kickCooldown -= dt;
+        // Decrementa AMBOS os cooldowns
+        if (this.kickCooldownStrong > 0) this.kickCooldownStrong -= dt;
+        if (this.kickCooldownWeak   > 0) this.kickCooldownWeak   -= dt;
 
         let dx = 0, dy = 0;
         if (keys[this.controls.up])    dy -= 1;
@@ -291,7 +315,7 @@ class Player extends Actor {
         this.applyMovement(dt, dx, dy);
         this.updatePossession(ball);
 
-        // Chute fraco primeiro (tem prioridade se ambos pressionados no mesmo frame)
+        // Chute fraco
         if (keys[this.controls.kickWeak]) {
             this.kick(ball, 'weak');
             keys[this.controls.kickWeak] = false;
@@ -332,7 +356,7 @@ class Ball {
             if (newSpeed < 1) {
                 this.vx = 0;
                 this.vy = 0;
-                this.friction = 1.8; // volta ao atrito padrão quando para
+                this.friction = 1.8;
             }
         }
 
@@ -351,7 +375,7 @@ class Ball {
 
         const inGoalY = this.y > GOAL_TOP && this.y < GOAL_BOTTOM;
 
-        // Gol ESQUERDO = defendido pelo VERMELHO (P1) → ponto pro AZUL (P2)
+        // Gol esquerdo (defendido pelo VERMELHO / P1) → ponto pro AZUL (P2)
         if (this.x - this.radius < FIELD_MARGIN) {
             if (inGoalY) {
                 if (this.x - this.radius < FIELD_MARGIN - GOAL_DEPTH) {
@@ -364,7 +388,7 @@ class Ball {
             }
         }
 
-        // Gol DIREITO = defendido pelo AZUL (P2) → ponto pro VERMELHO (P1)
+        // Gol direito (defendido pelo AZUL / P2) → ponto pro VERMELHO (P1)
         if (this.x + this.radius > VIEW_W - FIELD_MARGIN) {
             if (inGoalY) {
                 if (this.x + this.radius > VIEW_W - FIELD_MARGIN + GOAL_DEPTH) {

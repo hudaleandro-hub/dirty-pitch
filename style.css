@@ -2,7 +2,7 @@
    DIRT PITCH - Estilos globais
    ========================================== */
 
-* {
+   * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -48,8 +48,8 @@ canvas {
     align-items: center;
     overflow: hidden;
 
-    /* A imagem de fundo fica aqui */
-    background-image: url('assets/background.jpeg');
+    /* GIF de fundo da tela inicial */
+    background-image: url('assets/background.gif');
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
@@ -109,7 +109,6 @@ canvas {
     cursor: pointer;
     text-transform: uppercase;
 
-    /* Estilo "pixel" com sombra sólida */
     box-shadow: 4px 4px 0 #000;
     transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease;
 }
@@ -138,5 +137,5 @@ canvas {
    ========================================== */
 #titleScreen.fade-out {
     opacity: 0;
-    pointer-events: none; /* impede cliques durante o fade */
+    pointer-events: none;
 }
