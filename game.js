@@ -43,16 +43,16 @@ const CONFIG = {
     DASH_COOLDOWN: 10.0,
     DASH_TRAIL_LIFE: 0.25,
 
-    // Goleiro
+    // Goleiro — patrulha
     GOALKEEPER_RADIUS: 5,
-    GOALKEEPER_SPEED: 60,               // velocidade máxima quando há decisão
-    GOALKEEPER_ACCEL: 220,              // aceleração (px/s²)
-    GOALKEEPER_DECEL: 400,              // desaceleração (px/s²)
-    GOALKEEPER_IDLE_SPEED: 30,          // velocidade quando só "seguindo" a bola
-    GOALKEEPER_REFLEX_BOOST: 1.6,       // multiplicador de velocidade nos últimos instantes
-    GOALKEEPER_REFLEX_RANGE_X: 25,      // distância X do gol que ativa o reflexo
-    GOALKEEPER_DEADZONE: 1.0,           // px — abaixo disso não se mexe
-    GOALKEEPER_AWARENESS_Y: 30,         // margem em Y além do gol pra "acordar"
+    GOALKEEPER_SPEED: 60,
+    GOALKEEPER_ACCEL: 220,
+    GOALKEEPER_DECEL: 400,
+    GOALKEEPER_IDLE_SPEED: 30,
+    GOALKEEPER_REFLEX_BOOST: 1.6,
+    GOALKEEPER_REFLEX_RANGE_X: 25,
+    GOALKEEPER_DEADZONE: 1.0,
+    GOALKEEPER_AWARENESS_Y: 30,
     GOALKEEPER_HOLD_TIME: 0.8,
     GOALKEEPER_KICK_SPEED: 220,
     GOALKEEPER_KICK_RANDOM_X: 30,
@@ -60,11 +60,21 @@ const CONFIG = {
     GOALKEEPER_DEPTH: 8,
     GOALKEEPER_BALL_OFFSET: 6,
 
-    // Margem de erro do goleiro
+    // Goleiro — erro por chute
     GOALKEEPER_ERROR_CHANCE: 0.10,
     GOALKEEPER_DECISION_RANGE_X: 80,
     GOALKEEPER_DECISION_LEAD_TIME: 0.6,
-    GOALKEEPER_HESITATION_TIME: 0.15,   // tempo mínimo com decisão "errada" antes de reconsiderar
+    GOALKEEPER_HESITATION_TIME: 0.15,
+
+    // Goleiro — saída (rush)
+    GOALKEEPER_RUSH_TRIGGER_X: 55,
+    GOALKEEPER_RUSH_MAX_X: 35,
+    GOALKEEPER_RUSH_SPEED: 85,
+    GOALKEEPER_RUSH_ACCEL: 400,
+    GOALKEEPER_RUSH_STEAL_RANGE: 3,
+    GOALKEEPER_RUSH_QUICK_HOLD: 0.35,
+    GOALKEEPER_RUSH_COOLDOWN: 2.0,
+    GOALKEEPER_RUSH_MAX_Y_MARGIN: 20,
 
     MAX_DT: 0.033,
 };
@@ -86,6 +96,9 @@ const {
     GOALKEEPER_DEPTH, GOALKEEPER_BALL_OFFSET,
     GOALKEEPER_ERROR_CHANCE, GOALKEEPER_DECISION_RANGE_X, GOALKEEPER_DECISION_LEAD_TIME,
     GOALKEEPER_HESITATION_TIME,
+    GOALKEEPER_RUSH_TRIGGER_X, GOALKEEPER_RUSH_MAX_X, GOALKEEPER_RUSH_SPEED,
+    GOALKEEPER_RUSH_ACCEL, GOALKEEPER_RUSH_STEAL_RANGE, GOALKEEPER_RUSH_QUICK_HOLD,
+    GOALKEEPER_RUSH_COOLDOWN, GOALKEEPER_RUSH_MAX_Y_MARGIN,
 } = CONFIG;
 
 const GOAL_TOP    = (VIEW_H - GOAL_HEIGHT) / 2;
@@ -170,6 +183,13 @@ function hexToRgba(hex, alpha) {
     return `rgba(${r},${g},${b},${alpha})`;
 }
 
+function darkenHex(hex, factor) {
+    const r = Math.round(parseInt(hex.slice(1, 3), 16) * (1 - factor));
+    const g = Math.round(parseInt(hex.slice(3, 5), 16) * (1 - factor));
+    const b = Math.round(parseInt(hex.slice(5, 7), 16) * (1 - factor));
+    return `rgb(${r},${g},${b})`;
+}
+
 // ==========================================
 // ESTADO DO JOGO
 // ==========================================
@@ -190,6 +210,7 @@ function resetPositions() {
     p1.dashCooldown = 0;
     p1.dashTimeLeft = 0;
     p1.trail = [];
+    p1.frozen = false;
 
     p2.x = VIEW_W / 2 + 60;
     p2.y = VIEW_H / 2;
@@ -200,6 +221,7 @@ function resetPositions() {
     p2.dashCooldown = 0;
     p2.dashTimeLeft = 0;
     p2.trail = [];
+    p2.frozen = false;
 
     ball.x = VIEW_W / 2;
     ball.y = VIEW_H / 2;
@@ -235,6 +257,8 @@ class Actor {
         this.dashVX = 0;
         this.dashVY = 0;
         this.trail = [];
+
+        this.frozen = false;
 
         this.color = '#e94b3c';
     }
@@ -465,7 +489,9 @@ class Actor {
             bodyY -= (bodyH - this.radius * 2) / 2 * Math.sign(this.facing.y);
         }
 
-        ctx.fillStyle = this.color;
+        const bodyColor = this.frozen ? darkenHex(this.color, 0.45) : this.color;
+
+        ctx.fillStyle = bodyColor;
         ctx.fillRect(
             Math.round(bodyX),
             Math.round(bodyY),
@@ -486,6 +512,14 @@ class Actor {
         const fx = this.x + this.facing.x * (this.radius - 1);
         const fy = this.y + this.facing.y * (this.radius - 1);
         ctx.fillRect(Math.round(fx) - 1, Math.round(fy) - 1, 2, 2);
+
+        if (this.frozen) {
+            ctx.fillStyle = 'rgba(180,200,255,0.9)';
+            ctx.fillRect(Math.round(this.x - 2), Math.round(this.y - this.radius - 3), 4, 2);
+            ctx.fillRect(Math.round(this.x - 1), Math.round(this.y - this.radius - 1), 1, 1);
+            ctx.fillRect(Math.round(this.x + 0), Math.round(this.y - this.radius - 1), 1, 1);
+            ctx.fillRect(Math.round(this.x + 1), Math.round(this.y - this.radius - 1), 1, 1);
+        }
     }
 }
 
@@ -502,6 +536,16 @@ class Player extends Actor {
     update(dt, ball) {
         if (this.kickCooldownStrong > 0) this.kickCooldownStrong -= dt;
         if (this.kickCooldownWeak   > 0) this.kickCooldownWeak   -= dt;
+
+        if (this.frozen) {
+            this.vx = 0;
+            this.vy = 0;
+
+            if (keys[this.controls.kickWeak])   keys[this.controls.kickWeak]   = false;
+            if (keys[this.controls.kickStrong]) keys[this.controls.kickStrong] = false;
+            if (keys[this.controls.dash])       keys[this.controls.dash]       = false;
+            return;
+        }
 
         this.updateDash(dt);
 
@@ -536,7 +580,7 @@ class Player extends Actor {
 }
 
 // ==========================================
-// CLASSE: Goalkeeper (bot) - FLUIDEZ
+// CLASSE: Goalkeeper (bot)
 // ==========================================
 class Goalkeeper {
     constructor(team) {
@@ -552,7 +596,7 @@ class Goalkeeper {
         this.x = this.baseX;
         this.y = VIEW_H / 2;
 
-        // Física própria (só Y)
+        this.vx = 0;
         this.vy = 0;
 
         this.minY = GOAL_TOP + this.radius;
@@ -564,20 +608,27 @@ class Goalkeeper {
         this.throwTimer = 0;
         this.distributionCooldown = 0;
 
-        // Decisão por chute
         this.decisionMade = false;
         this.decisionTargetY = null;
-        this.decisionAge = 0;        // tempo desde que a decisão foi feita
-        this.decisionIsWrong = false;// debug/curiosidade (poderia ser usado em HUD)
-        this.awarenessBoost = 1;     // multiplicador dinâmico (reflexo)
-
-        // Visual: leve inclinação quando rápido
+        this.decisionAge = 0;
+        this.decisionIsWrong = false;
+        this.awarenessBoost = 1;
         this.tiltDir = 0;
+
+        // Rush (saída)
+        this.rushing = false;
+        this.rushCooldown = 0;
+        this.rushTargetX = this.baseX;
+        this.rushTargetY = VIEW_H / 2;
+
+        // Se está saindo, é rápido. Se não, é o normal.
+        this.holdTimeBase = GOALKEEPER_HOLD_TIME;
     }
 
     reset() {
         this.x = this.baseX;
         this.y = VIEW_H / 2;
+        this.vx = 0;
         this.vy = 0;
         this.state = 'GUARD';
         this.holdTimer = 0;
@@ -590,18 +641,36 @@ class Goalkeeper {
         this.decisionIsWrong = false;
         this.awarenessBoost = 1;
         this.tiltDir = 0;
+        this.rushing = false;
+        this.rushCooldown = 0;
+        this.rushTargetX = this.baseX;
+        this.rushTargetY = VIEW_H / 2;
+    }
+
+    getOpponentPlayer() {
+        return this.team === 'red' ? p2 : p1;
     }
 
     getTeammatePlayer() {
         return this.team === 'red' ? p1 : p2;
     }
 
+    // A linha do gol deste goleiro
+    get goalLineX() {
+        return this.team === 'red' ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
+    }
+
+    // Sinal (+1/-1) que aponta "para fora do gol" deste goleiro
+    get outwardSign() {
+        return this.team === 'red' ? 1 : -1;
+    }
+
     update(dt, ball) {
         if (this.distributionCooldown > 0) this.distributionCooldown -= dt;
+        if (this.rushCooldown > 0) this.rushCooldown -= dt;
 
         if (this.state === 'GUARD') {
-            this.x = this.baseX;
-            this.updateGuardY(dt, ball);
+            this.updateGuard(dt, ball);
             this.tryCatch(ball);
         }
         else if (this.state === 'HOLDING') {
@@ -616,12 +685,176 @@ class Goalkeeper {
         }
     }
 
-    // ---------- GUARD: cálculo de movimento com aceleração ----------
-    updateGuardY(dt, ball) {
-        // 1. Tenta decidir o lado (uma vez por chute)
+    // ---------- GUARD ----------
+    updateGuard(dt, ball) {
+        // Decide se deve sair (rush)
+        this.maybeRush(ball);
+
+        if (this.rushing) {
+            this.updateRush(dt, ball);
+            // Checa roubo
+            this.tryRushSteal(ball);
+            return;
+        }
+
+        // Comportamento normal (parado na linha)
+        this.updateGuardIdle(dt, ball);
+    }
+
+    // ---------- SAÍDA (RUSH) ----------
+    maybeRush(ball) {
+        // Só pode sair se:
+        // - está em GUARD
+        // - não está em cooldown de rush
+        // - não tem bola
+        if (this.rushing) return;
+        if (this.rushCooldown > 0) return;
+        if (ball.owner === this) return;
+
+        const opponent = this.getOpponentPlayer();
+        if (!opponent) return;
+        if (ball.owner !== opponent) return; // adversário precisa ter a bola
+
+        // Distância X do adversário até a linha do gol
+        const dx = Math.abs(opponent.x - this.goalLineX);
+        if (dx > GOALKEEPER_RUSH_TRIGGER_X) return;
+
+        // Adversário precisa estar na faixa Y do gol (com margem)
+        if (opponent.y < GOAL_TOP - GOALKEEPER_RUSH_MAX_Y_MARGIN) return;
+        if (opponent.y > GOAL_BOTTOM + GOALKEEPER_RUSH_MAX_Y_MARGIN) return;
+
+        // Dispara!
+        this.rushing = true;
+        this.rushTargetX = opponent.x;
+        this.rushTargetY = opponent.y;
+
+        // Cancela decisão de defesa — o foco agora é a saída
+        this.decisionMade = false;
+        this.decisionTargetY = null;
+        this.decisionAge = 0;
+    }
+
+    updateRush(dt, ball) {
+        const opponent = this.getOpponentPlayer();
+        if (!opponent) { this.endRush(); return; }
+
+        // Se o adversário perdeu a bola (chutou, passou, foi roubado), volta
+        if (ball.owner !== opponent) {
+            this.endRush();
+            return;
+        }
+
+        // Atualiza alvo com a posição atual do adversário
+        this.rushTargetX = opponent.x;
+        this.rushTargetY = opponent.y;
+
+        // Limita o X ao alcance máximo da saída
+        const maxReachX = this.goalLineX + this.outwardSign * GOALKEEPER_RUSH_MAX_X;
+        // "Rumo ao campo" a partir da linha do gol
+        const desiredX = clamp(
+            this.rushTargetX,
+            Math.min(this.goalLineX, maxReachX),
+            Math.max(this.goalLineX, maxReachX)
+        );
+
+        // Movimento em X (sai em direção ao adversário)
+        const dx = desiredX - this.x;
+        const targetVX = Math.sign(dx) * Math.min(GOALKEEPER_RUSH_SPEED, Math.abs(dx) * 10);
+        const dvx = targetVX - this.vx;
+        const accel = GOALKEEPER_RUSH_ACCEL * dt;
+        if (Math.abs(dvx) <= accel) this.vx = targetVX;
+        else this.vx += Math.sign(dvx) * accel;
+
+        // Movimento em Y (segue o adversário)
+        const dy = this.rushTargetY - this.y;
+        const targetVY = Math.sign(dy) * Math.min(GOALKEEPER_RUSH_SPEED, Math.abs(dy) * 10);
+        const dvy = targetVY - this.vy;
+        if (Math.abs(dvy) <= accel) this.vy = targetVY;
+        else this.vy += Math.sign(dvy) * accel;
+
+        // Aplica
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+
+        // Clamp X: não pode voltar para dentro do gol nem sair demais
+        const minX = Math.min(this.goalLineX, maxReachX);
+        const maxX = Math.max(this.goalLineX, maxReachX);
+        this.x = clamp(this.x, minX, maxX);
+
+        // Clamp Y: pode sair um pouco além da boca do gol, mas não muito
+        this.y = clamp(this.y,
+            Math.max(GOAL_TOP - GOALKEEPER_RUSH_MAX_Y_MARGIN, FIELD_MARGIN + this.radius),
+            Math.min(GOAL_BOTTOM + GOALKEEPER_RUSH_MAX_Y_MARGIN, VIEW_H - FIELD_MARGIN - this.radius)
+        );
+
+        // Inclinação visual
+        if (Math.abs(this.vy) > 15 || Math.abs(this.vx) > 15) {
+            this.tiltDir = Math.sign(this.vy !== 0 ? this.vy : this.vx);
+        } else {
+            this.tiltDir = 0;
+        }
+    }
+
+    tryRushSteal(ball) {
+        const opponent = this.getOpponentPlayer();
+        if (!opponent) return;
+        if (ball.owner !== opponent) return;
+        if (this.distributionCooldown > 0) return;
+
+        const d = dist(this, opponent);
+        const stealRange = this.radius + opponent.radius + GOALKEEPER_RUSH_STEAL_RANGE;
+
+        if (d < stealRange) {
+            // Rouba!
+            ball.owner = this;
+            ball.vx = 0;
+            ball.vy = 0;
+            this.vx = 0;
+            this.vy = 0;
+
+            // Entra em HOLDING com hold time curto (reposição rápida)
+            this.state = 'HOLDING';
+            this.holdTimer = GOALKEEPER_RUSH_QUICK_HOLD;
+            this.holdTimeBase = GOALKEEPER_HOLD_TIME;
+
+            this.decisionMade = false;
+            this.decisionTargetY = null;
+            this.decisionAge = 0;
+            this.decisionIsWrong = false;
+
+            // Congela o adversário durante a reposição (mesma mecânica de antes)
+            opponent.frozen = true;
+            opponent.vx = 0;
+            opponent.vy = 0;
+
+            this.endRush();
+        }
+    }
+
+    endRush() {
+        this.rushing = false;
+        this.rushCooldown = GOALKEEPER_RUSH_COOLDOWN;
+    }
+
+    // ---------- GUARD IDLE (na linha) ----------
+    updateGuardIdle(dt, ball) {
+        // "Puxa" o goleiro de volta para baseX se ele estiver fora (ex: acabou de voltar de um rush)
+        const dxToBase = this.baseX - this.x;
+        if (Math.abs(dxToBase) > 0.5) {
+            const targetVX = Math.sign(dxToBase) * Math.min(GOALKEEPER_SPEED, Math.abs(dxToBase) * 8);
+            const dvx = targetVX - this.vx;
+            const accel = GOALKEEPER_ACCEL * dt;
+            if (Math.abs(dvx) <= accel) this.vx = targetVX;
+            else this.vx += Math.sign(dvx) * accel;
+            this.x += this.vx * dt;
+        } else {
+            this.x = this.baseX;
+            this.vx = 0;
+        }
+
+        // Y — mesmo comportamento fluido de antes
         this.maybeDecide(ball);
 
-        // 2. Calcula alvo Y e velocidade máxima
         let targetY;
         let maxSpeed;
 
@@ -632,16 +865,13 @@ class Goalkeeper {
             maxSpeed = GOALKEEPER_SPEED;
             this.decisionAge += dt;
         } else if (this.isBallNearDefenseArea(ball)) {
-            // Bola na área mas não é chute a gol: "segue" devagar
             targetY = clamp(ball.y, this.minY, this.maxY);
             maxSpeed = GOALKEEPER_IDLE_SPEED;
         } else {
-            // Sem ameaça: volta ao centro suavemente
             targetY = (GOAL_TOP + GOAL_BOTTOM) / 2;
             maxSpeed = GOALKEEPER_IDLE_SPEED;
         }
 
-        // 3. Boost de reflexo quando a bola está a poucos pixels do gol
         this.awarenessBoost = 1;
         if (ballApproaching) {
             const distanceToGoalLine = this.team === 'red'
@@ -654,12 +884,10 @@ class Goalkeeper {
 
         const effectiveMaxSpeed = maxSpeed * this.awarenessBoost;
 
-        // 4. Aceleração/desaceleração em direção ao alvo
         const dy = targetY - this.y;
         const isInDeadzone = Math.abs(dy) < GOALKEEPER_DEADZONE;
 
         if (isInDeadzone) {
-            // Zona morta: freia até parar
             const decel = GOALKEEPER_DECEL * dt;
             if (Math.abs(this.vy) <= decel) {
                 this.vy = 0;
@@ -667,7 +895,6 @@ class Goalkeeper {
                 this.vy -= Math.sign(this.vy) * decel;
             }
         } else {
-            // Fora da deadzone: acelera para atingir a velocidade alvo
             const targetVY = Math.sign(dy) * effectiveMaxSpeed;
             const dvy = targetVY - this.vy;
             const accel = GOALKEEPER_ACCEL * dt;
@@ -678,58 +905,57 @@ class Goalkeeper {
             }
         }
 
-        // 5. Aplica movimento
         this.y += this.vy * dt;
         this.y = clamp(this.y, this.minY, this.maxY);
 
-        // Se bateu no limite, zera a velocidade
         if (this.y === this.minY && this.vy < 0) this.vy = 0;
         if (this.y === this.maxY && this.vy > 0) this.vy = 0;
 
-        // 6. Inclinação visual (feedback de esforço)
         if (Math.abs(this.vy) > 15) {
             this.tiltDir = Math.sign(this.vy);
         } else {
             this.tiltDir = 0;
         }
 
-        // 7. Reset de decisão se a bola perdeu ameaça
         if (this.decisionMade && this.ballLostThreat(ball)) {
             this.decisionMade = false;
             this.decisionTargetY = null;
             this.decisionAge = 0;
             this.decisionIsWrong = false;
         }
-
-        // 8. Hesitação: se decidiu errado, segura a decisão por um tempo mínimo
-        // (não permite "voltar atrás" imediatamente)
-        if (this.decisionMade && this.decisionAge < GOALKEEPER_HESITATION_TIME) {
-            // Mantém a decisão — nada a fazer aqui, só documentar
-        }
     }
 
-    // ---------- DEFESA ----------
+    // ---------- DEFESA (patrulha) ----------
     tryCatch(ball) {
         if (ball.owner) return;
         if (this.distributionCooldown > 0) return;
 
         const d = dist(this, ball);
         if (d < this.radius + ball.radius + 1) {
-            this.catchBall(ball);
+            this.catchBall(ball, false);
         }
     }
 
-    catchBall(ball) {
+    catchBall(ball, isFromRush) {
         ball.owner = this;
         ball.vx = 0;
         ball.vy = 0;
+        this.vx = 0;
         this.vy = 0;
         this.state = 'HOLDING';
-        this.holdTimer = GOALKEEPER_HOLD_TIME;
+        this.holdTimer = isFromRush ? GOALKEEPER_RUSH_QUICK_HOLD : GOALKEEPER_HOLD_TIME;
         this.decisionMade = false;
         this.decisionTargetY = null;
         this.decisionAge = 0;
         this.decisionIsWrong = false;
+
+        // Congela o adversário
+        const opponent = this.getOpponentPlayer();
+        if (opponent) {
+            opponent.frozen = true;
+            opponent.vx = 0;
+            opponent.vy = 0;
+        }
     }
 
     holdBallAtChest(ball) {
@@ -780,9 +1006,14 @@ class Goalkeeper {
         this.decisionTargetY = null;
         this.decisionAge = 0;
         this.decisionIsWrong = false;
+
+        const opponent = this.getOpponentPlayer();
+        if (opponent) {
+            opponent.frozen = false;
+        }
     }
 
-    // ---------- DETECÇÃO ----------
+    // ---------- SENSORES ----------
     isBallApproachingGoal(ball) {
         if (ball.owner) return false;
         const isLeft = this.team === 'red';
@@ -790,15 +1021,10 @@ class Goalkeeper {
     }
 
     isBallNearDefenseArea(ball) {
-        // Distância X à linha do gol
-        const goalLineX = this.team === 'red' ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
-        const dx = Math.abs(ball.x - goalLineX);
+        const dx = Math.abs(ball.x - this.goalLineX);
         if (dx > AREA_W * 1.5) return false;
-
-        // Distância Y ao gol (com margem)
         if (ball.y < GOAL_TOP - GOALKEEPER_AWARENESS_Y) return false;
         if (ball.y > GOAL_BOTTOM + GOALKEEPER_AWARENESS_Y) return false;
-
         return true;
     }
 
@@ -809,9 +1035,7 @@ class Goalkeeper {
         if (isLeftGoal && ball.vx >= -1) return false;
         if (!isLeftGoal && ball.vx <= 1) return false;
 
-        const goalLineX = isLeftGoal ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
-        const dxToGoal = goalLineX - ball.x;
-
+        const dxToGoal = this.goalLineX - ball.x;
         if (Math.abs(dxToGoal) > GOALKEEPER_DECISION_RANGE_X) return false;
 
         const timeToGoal = dxToGoal / ball.vx;
@@ -825,9 +1049,7 @@ class Goalkeeper {
         if (this.decisionMade) return;
         if (!this.ballIsHeadingToGoal(ball)) return;
 
-        const isLeftGoal = (this.team === 'red');
-        const goalLineX = isLeftGoal ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
-        const dxToGoal = goalLineX - ball.x;
+        const dxToGoal = this.goalLineX - ball.x;
         const timeToGoal = dxToGoal / ball.vx;
         const projectedY = clamp(ball.y + ball.vy * timeToGoal, GOAL_TOP, GOAL_BOTTOM);
 
@@ -848,21 +1070,13 @@ class Goalkeeper {
 
     ballLostThreat(ball) {
         if (ball.owner) return true;
-
         const isLeftGoal = (this.team === 'red');
         if (isLeftGoal && ball.vx >= 0) return true;
         if (!isLeftGoal && ball.vx <= 0) return true;
-
-        // Só considera "perdeu ameaça" se a bola está lenta E longe do gol
         const speed = Math.hypot(ball.vx, ball.vy);
-        const goalLineX = isLeftGoal ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
-        const dx = Math.abs(ball.x - goalLineX);
-
+        const dx = Math.abs(ball.x - this.goalLineX);
         if (speed < 20 && dx > AREA_W) return true;
-
-        // Bola muito fora do Y do gol
         if (ball.y < GOAL_TOP - 40 || ball.y > GOAL_BOTTOM + 40) return true;
-
         return false;
     }
 
@@ -880,9 +1094,9 @@ class Goalkeeper {
         ctx.fill();
 
         const r = this.radius;
-        // Leve inclinação quando em movimento rápido
         const tilt = this.tiltDir * 1;
 
+        // Corpo
         ctx.fillStyle = this.color;
         ctx.fillRect(
             Math.round(this.x - r + tilt),
@@ -900,7 +1114,19 @@ class Goalkeeper {
             2
         );
 
-        // Contorno
+        // Se está em rush, adiciona um contorno de alerta (linha extra grossa/animada)
+        if (this.rushing) {
+            ctx.strokeStyle = 'rgba(255,235,59,0.9)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(
+                Math.round(this.x - r - 1) + 0.5,
+                Math.round(this.y - r - 1) + 0.5,
+                r * 2 + 2 - 1,
+                r * 2 + 2 - 1
+            );
+        }
+
+        // Contorno normal
         ctx.strokeStyle = 'rgba(0,0,0,0.7)';
         ctx.lineWidth = 1;
         ctx.strokeRect(
@@ -994,6 +1220,9 @@ class Ball {
         gameState.goalPause = 1.4;
         this.vx = 0;
         this.vy = 0;
+
+        p1.frozen = false;
+        p2.frozen = false;
 
         gkRed.decisionMade = false;
         gkRed.decisionTargetY = null;
