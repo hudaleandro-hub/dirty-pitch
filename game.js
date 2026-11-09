@@ -1,5 +1,5 @@
 // ==========================================
-// DIRT PITCH - Otimizado (timestep fixo + interpolação + pausa)
+// DIRT PITCH - Otimizado + Efeitos Visuais
 // P1: WASD + Q (forte) + E (fraco/pênalti) + F (dash) + R (carrinho)
 // P2: OKLÇ + P (forte) + I (fraco/pênalti) + J (dash) + U (carrinho)
 // ==========================================
@@ -86,6 +86,20 @@ const CONFIG = {
 
     GOALKEEPER_FREEZE_RECOVERY: 0.5,
 
+    // ---- EFEITOS VISUAIS ----
+    FX_GRASS_INTERVAL: 0.09,
+    FX_GRASS_LIFE: 0.7,
+    FX_GRASS_CHANCE: 0.7,
+    FX_GRASS_SPEED_THRESHOLD: 25,
+    FX_GRASS_MAX: 120,
+
+    FX_CONFETTI_COUNT: 45,
+    FX_CONFETTI_LIFE: 1.6,
+    FX_CONFETTI_MAX: 200,
+
+    FX_KICK_SPARK_COUNT: 6,
+    FX_DASH_SPARK_COUNT: 4,
+
     // Loop
     FIXED_DT: 1 / 60,
     MAX_ACCUMULATOR: 0.25,
@@ -115,6 +129,9 @@ const {
     GOALKEEPER_RUSH_ACCEL, GOALKEEPER_RUSH_STEAL_RANGE, GOALKEEPER_RUSH_QUICK_HOLD,
     GOALKEEPER_RUSH_COOLDOWN, GOALKEEPER_RUSH_MAX_Y_MARGIN,
     GOALKEEPER_FREEZE_RECOVERY,
+    FX_GRASS_INTERVAL, FX_GRASS_LIFE, FX_GRASS_CHANCE, FX_GRASS_SPEED_THRESHOLD, FX_GRASS_MAX,
+    FX_CONFETTI_COUNT, FX_CONFETTI_LIFE, FX_CONFETTI_MAX,
+    FX_KICK_SPARK_COUNT, FX_DASH_SPARK_COUNT,
     FIXED_DT, MAX_ACCUMULATOR,
 } = CONFIG;
 
@@ -207,7 +224,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('focus', () => {
-    // Retoma só quando o jogador confirmar visualmente a pausa
     if (gameStarted) isPaused = false;
 });
 
@@ -215,8 +231,7 @@ window.addEventListener('focus', () => {
 // UTILITÁRIOS
 // ==========================================
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-// distância rápida (sem a proteção de overflow do Math.hypot —
-// nossos valores são pequenos, então é seguro e ~3x mais rápido)
+
 const fastDist = (a, b) => {
     const dx = a.x - b.x, dy = a.y - b.y;
     return Math.sqrt(dx * dx + dy * dy);
@@ -292,6 +307,116 @@ function resetPositions() {
     gameState.penaltyShooter = null;
     gameState.penaltyTakerGoalSide = null;
     gameState.penaltyMessageTimer = 0;
+}
+
+// ==========================================
+// SISTEMA DE PARTÍCULAS (pool reciclado)
+// ==========================================
+const particles = [];
+
+function spawnParticle(x, y, vx, vy, life, color, size, gravity = 0, friction = 0) {
+    if (particles.length >= FX_CONFETTI_MAX) {
+        particles.shift();
+    }
+    particles.push({
+        x, y, vx, vy,
+        life, maxLife: life,
+        color, size,
+        gravity, friction,
+    });
+}
+
+function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life -= dt;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+            continue;
+        }
+        p.vy += p.gravity * dt;
+        if (p.friction > 0) {
+            const f = 1 - p.friction * dt;
+            p.vx *= f;
+            p.vy *= f;
+        }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+    }
+}
+
+function drawParticles(ctx) {
+    for (const p of particles) {
+        const t = p.life / p.maxLife;
+        ctx.globalAlpha = Math.min(1, t * 1.4);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+}
+
+// Helpers de FX
+function spawnGrassTrail(actor) {
+    if (Math.random() > FX_GRASS_CHANCE) return;
+    const speed = Math.sqrt(actor.vx * actor.vx + actor.vy * actor.vy);
+    if (speed < FX_GRASS_SPEED_THRESHOLD) return;
+
+    const px = actor.x + (Math.random() - 0.5) * actor.radius;
+    const py = actor.y + (Math.random() - 0.5) * actor.radius + actor.radius * 0.5;
+    const vx = (Math.random() - 0.5) * 8;
+    const vy = -Math.random() * 12 - 2;
+    const colors = ['#2a5a2a', '#3a7a3a', '#5a9a4a', '#6aaa52'];
+    const color = colors[(Math.random() * colors.length) | 0];
+    spawnParticle(px, py, vx, vy, FX_GRASS_LIFE, color, 1, 40, 2);
+}
+
+function spawnConfetti(x, y, primaryColor) {
+    const palette = [primaryColor, primaryColor, '#ffeb3b', '#ffffff'];
+    for (let i = 0; i < FX_CONFETTI_COUNT; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 80;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed - 40;
+        const color = palette[(Math.random() * palette.length) | 0];
+        const life = FX_CONFETTI_LIFE * (0.6 + Math.random() * 0.6);
+        const size = 1 + ((Math.random() * 2) | 0);
+        spawnParticle(x, y, vx, vy, life, color, size, 180, 0.8);
+    }
+}
+
+function spawnKickSpark(x, y, nx, ny) {
+    for (let i = 0; i < FX_KICK_SPARK_COUNT; i++) {
+        const spread = (Math.random() - 0.5) * 0.8;
+        const baseAngle = Math.atan2(ny, nx) + Math.PI;
+        const angle = baseAngle + spread;
+        const speed = 30 + Math.random() * 40;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        spawnParticle(x, y, vx, vy, 0.35, '#b89968', 1, 60, 3);
+    }
+}
+
+function spawnDashSpark(x, y, nx, ny) {
+    for (let i = 0; i < FX_DASH_SPARK_COUNT; i++) {
+        const spread = (Math.random() - 0.5) * 1.0;
+        const baseAngle = Math.atan2(ny, nx) + Math.PI;
+        const angle = baseAngle + spread;
+        const speed = 20 + Math.random() * 30;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        spawnParticle(x, y, vx, vy, 0.3, '#ffffff', 1, 30, 2);
+    }
+}
+
+const grassTimers = new WeakMap();
+function updateGrassFor(actor, dt) {
+    let t = grassTimers.get(actor) || 0;
+    t -= dt;
+    if (t <= 0) {
+        spawnGrassTrail(actor);
+        t = FX_GRASS_INTERVAL;
+    }
+    grassTimers.set(actor, t);
 }
 
 // ==========================================
@@ -385,6 +510,8 @@ class Actor {
 
         this.vx = 0;
         this.vy = 0;
+
+        spawnDashSpark(this.x, this.y, nx, ny);
     }
 
     updateDash(dt) {
@@ -498,7 +625,6 @@ class Actor {
         ball.vx = 0; ball.vy = 0;
         ball.friction = BALL_DEFAULT_FRICTION;
         ball.owner = null;
-        // posição da bola não é interpolada durante o teleporte (snap direto)
         ball.prevX = ball.x; ball.prevY = ball.y;
 
         const inFrontOffset = 12;
@@ -625,15 +751,16 @@ class Actor {
 
         ball.owner = null;
         ball.x = bx; ball.y = by;
-        ball.prevX = bx; ball.prevY = by;  // snap pós-chute
+        ball.prevX = bx; ball.prevY = by;
         ball.vx = nx * cfg.baseSpeed;
         ball.vy = ny * cfg.baseSpeed;
         ball.friction = cfg.friction;
         this[cdField] = cfg.cooldown;
+
+        spawnKickSpark(bx, by, nx, ny);
     }
 
     draw(ctx, alpha) {
-        // --- interpolação ---
         const rx = this.prevX + (this.x - this.prevX) * alpha;
         const ry = this.prevY + (this.y - this.prevY) * alpha;
         ctx.save();
@@ -676,10 +803,10 @@ class Actor {
 
         let bodyColor = this.color;
         let bodyAlpha = 1;
-        if (this.isTackling)           { bodyColor = '#ffeb3b'; }
-        else if (this.frozen)          { bodyColor = darkenHex(this.color, 0.45); bodyAlpha = 0.55; }
+        if (this.isTackling)              { bodyColor = '#ffeb3b'; }
+        else if (this.frozen)             { bodyColor = darkenHex(this.color, 0.45); bodyAlpha = 0.55; }
         else if (this.frozenRecovery > 0) { bodyColor = lightenHex(this.color, 0.35); bodyAlpha = 0.7; }
-        else if (this.stunned > 0)     { bodyColor = darkenHex(this.color, 0.2); bodyAlpha = 0.6; }
+        else if (this.stunned > 0)        { bodyColor = darkenHex(this.color, 0.2); bodyAlpha = 0.6; }
 
         ctx.globalAlpha = bodyAlpha;
         ctx.fillStyle = bodyColor;
@@ -791,6 +918,8 @@ class Player extends Actor {
         ball.friction = KICK_TYPES.weak.friction;
         ball.owner = null;
 
+        spawnKickSpark(ball.x, ball.y, nx, ny);
+
         gameState.penaltyActive = false;
         gameState.penaltyShooter = null;
         gameState.penaltyTakerGoalSide = null;
@@ -804,7 +933,7 @@ class Player extends Actor {
 }
 
 // ==========================================
-// CLASSE: Goalkeeper (cache de goalLineX/outwardSign)
+// CLASSE: Goalkeeper
 // ==========================================
 class Goalkeeper {
     constructor(team) {
@@ -817,7 +946,6 @@ class Goalkeeper {
             ? FIELD_MARGIN + GOALKEEPER_DEPTH
             : VIEW_W - FIELD_MARGIN - GOALKEEPER_DEPTH;
 
-        // Cache: constantes calculadas uma vez
         this.goalLineX = (team === 'red') ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
         this.outwardSign = (team === 'red') ? 1 : -1;
         this.minY = GOAL_TOP + this.radius;
@@ -1317,6 +1445,12 @@ class Ball {
         gameState.penaltyShooter = null;
         gameState.penaltyTakerGoalSide = null;
         gameState.penaltyMessageTimer = 0;
+
+        // Confete no gol
+        const gx = (side === 'left') ? FIELD_MARGIN : (VIEW_W - FIELD_MARGIN);
+        const gy = VIEW_H / 2;
+        const primary = (side === 'left') ? '#3a86ff' : '#e94b3c';
+        spawnConfetti(gx, gy, primary);
     }
 
     draw(ctx, alpha) {
@@ -1403,7 +1537,7 @@ function drawField(ctx) {
 }
 
 // ==========================================
-// HUD (com cache de fonte)
+// HUD
 // ==========================================
 let _cachedFont = '';
 function setFont(f) {
@@ -1426,7 +1560,6 @@ function drawPenaltyAim(ctx, alpha) {
     const shooter = gameState.penaltyShooter;
     if (!shooter) return;
 
-    // usar posições interpoladas
     const sx = shooter.prevX + (shooter.x - shooter.prevX) * alpha;
     const sy = shooter.prevY + (shooter.y - shooter.prevY) * alpha;
     const bx = ball.prevX + (ball.x - ball.prevX) * alpha;
@@ -1488,15 +1621,6 @@ function drawHUD(ctx) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(0, VIEW_H - 12, VIEW_W, 12);
 
-    setFont('6px monospace');
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#e94b3c';
-    ctx.fillText('P1: WASD | Q forte | E fraco | F dash | R carrinho', 4, VIEW_H - 4);
-
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#3a86ff';
-    ctx.fillText('P2: O K L Ç | P forte | I fraco | J dash | U carrinho', VIEW_W - 4, VIEW_H - 4);
-
     if (gameState.penaltyActive) {
         ctx.fillStyle = 'rgba(0,0,0,0.65)';
         ctx.fillRect(0, 18, VIEW_W, 12);
@@ -1556,7 +1680,6 @@ let lastTime = 0;
 let accumulator = 0;
 let isPaused = false;
 
-// Guarda o estado anterior de todos os "atores" (para interpolação)
 function snapshotPrev() {
     p1.prevX = p1.x; p1.prevY = p1.y;
     p2.prevX = p2.x; p2.prevY = p2.y;
@@ -1565,7 +1688,6 @@ function snapshotPrev() {
     gkBlue.prevX = gkBlue.x; gkBlue.prevY = gkBlue.y;
 }
 
-// Executa 1 passo de física (dt fixo)
 function stepPhysics(dt) {
     if (gameState.goalPause > 0) {
         gameState.goalPause -= dt;
@@ -1574,6 +1696,7 @@ function stepPhysics(dt) {
             gameState.lastScorer = null;
             resetPositions();
         }
+        updateParticles(dt);
         return;
     }
 
@@ -1585,6 +1708,10 @@ function stepPhysics(dt) {
     p1.update(dt, ball);
     p2.update(dt, ball);
 
+    // grama levantada ao andar
+    if (!p1.isBlocked && !p1.isDashing && !p1.isTackling) updateGrassFor(p1, dt);
+    if (!p2.isBlocked && !p2.isDashing && !p2.isTackling) updateGrassFor(p2, dt);
+
     if (!gameState.penaltyActive) {
         p1.tryTackleSteal(ball, p2);
         p2.tryTackleSteal(ball, p1);
@@ -1594,6 +1721,8 @@ function stepPhysics(dt) {
     gkRed.update(dt, ball);
     gkBlue.update(dt, ball);
     ball.update(dt);
+
+    updateParticles(dt);
 }
 
 function render(alpha) {
@@ -1602,21 +1731,13 @@ function render(alpha) {
 
     drawField(ctx);
     ball.draw(ctx, alpha);
+    drawParticles(ctx);
     gkRed.draw(ctx, alpha);
     gkBlue.draw(ctx, alpha);
     p1.draw(ctx, alpha);
     p2.draw(ctx, alpha);
 
     drawPenaltyAim(ctx, alpha);
-
-    setFont('6px monospace');
-    if (ball.owner === p1) {
-        ctx.fillStyle = 'rgba(233,75,60,0.9)';
-        ctx.fillText('P1 (VERMELHO) COM A BOLA', 4, 20);
-    } else if (ball.owner === p2) {
-        ctx.fillStyle = 'rgba(58,134,255,0.9)';
-        ctx.fillText('P2 (AZUL) COM A BOLA', 4, 20);
-    }
 
     drawHUD(ctx);
 
@@ -1634,23 +1755,19 @@ function loop(now) {
     const rawDt = (now - lastTime) / 1000;
     lastTime = now;
 
-    // Se pausado, não acumula tempo (evita "corrida" ao retomar)
     if (isPaused) {
         render(0);
         return;
     }
 
-    // Clamp para evitar spiral of death
     accumulator += Math.min(rawDt, MAX_ACCUMULATOR);
 
-    // Física em passos fixos
     while (accumulator >= FIXED_DT) {
         snapshotPrev();
         stepPhysics(FIXED_DT);
         accumulator -= FIXED_DT;
     }
 
-    // Render com interpolação (alpha = fração do passo físico pendente)
     const alpha = clamp(accumulator / FIXED_DT, 0, 1);
     render(alpha);
 }
